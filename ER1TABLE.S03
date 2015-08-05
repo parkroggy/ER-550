@@ -1,0 +1,799 @@
+;*******************************************************;
+;*  <table.s03> for ER-51XX SERIES                 *****;
+;*  i/o map and contants define                    *****;
+;*  internal sfr allocate                          *****;
+;*  VER STANDARD 01                                *****;
+;*******************************************************;
+; EXT INT0  - power fail / RS-232C 1 and 2
+; EXT INT1  - printer service
+; TIMER 0   - display/keyscan
+; TIMER 1   - baud rate generator
+; TIMER 2   - no use
+; SIO       - Serial Interface
+;
+; PORT1.0   - Mode key enable           ; initial = 1  active  = 0
+; PORT1.1   - extend RAM                ; initial = 0  active  = 1
+; PORT1.2   - extend ROM                ; initial = 0  active  = 1
+; PORT1.3   - ram chib enable           ; initial = 1  active  = 0
+; PORT1.4   - buzzer                    ; initial = 1  active  = 0
+; PORT1.5   - 75518 clock               ; initial = 0  1/0 toggle
+; PORT1.6   - disp latch enable(75518)  ; initial = 0  active  = 1
+; PORT1.7   - 75518 data in             ; initial = 0  data out= 1
+; PORT1 =   00011001 = 0x19h -> clr 1.3 ; (ram 1)
+;
+; PORT3.0   Rxd -                       ; initial = 1   not use
+; PORT3.1   Txd -                       ; initial = 1   not use
+; PORT3.2   INT0                        ; initial = 1
+; PORT3.3   INT1                        ; initial = 1
+; PORT3.5   fiscal pgm 12V        T1    ; initial = 0  active = 1
+; PORT3.5   fiscal pgm 12V test   T1    ; initial = 1  active = 0
+; PORT3.4   fiscal epprn CS       T0    ; initial = 1  active = 0
+; PORT3.6   WR                          ; initial = 1
+; PORT3.7   RD                          ; initial = 1
+; PORT3 =   11101111 = 0xef
+; PORT3 =   11111111 = 0xff     test
+;
+; PORT0     address low
+; PORT2     address high
+;
+;-------------------------------------------------------------------------------
+;75518
+;                   :
+; prt_read  (FE40H) :   all ,comp,comp,end ,val , r  , j  ,auto
+;                       clr  d #1 d #2 snr  snr  hme  hme  snr
+; prt_font  (FFE0H) :    2    3    0    1    7    6    5    4
+;                            auto            r    j   dot  clk
+; prt_stat  (FFD0H) :    9  ,cut , mt , sp ,feed,feed,cut ,key
+;
+; rtc_      (FF4XH) :   ADD (A0 - A3) DATA (D5/6/0/7)
+;                   ;
+;      KEYSCAN      ;   1) scan address  A11 / A7 / A6
+;                   ;   15141312  1110 9 8  7 6 5 4  3 2 1 0
+;                   ;
+;  MODE SCAN        ;   1 1 1 1    1 1 1 0  0 0 0 0  0 0 0 0 (0FE00H) P1.0
+;    60 KEYS        ;   1 1 1 1    1 1 1 0  0 0 x x  x 0 0 1 (0FE01H)
+;    90 KEYS        ;   1 1 1 1    1 1 1 0  0 0 x x  x 0 1 0 (0FE02H)
+;   160 KEYS        ;   1 1 1 1    1 1 1 0  0 0 x x  x 1 0 0 (0FE04H)
+;                   ;
+;                   ;
+;    KEY HIGH ADD   ;  160 KEYs (all)     90 KEYs (#+&)      60 KEYs (#)
+;                   ;  0 0.0 1 0 0=04     0 0.0 0 1 0=02 @   0 0.0 0 0 1=01 #
+;                   ;  0 0.1 1 0 0=0c @   0 0.1 0 1 0=0a &   0 0.1 0 0 1=09 #
+;                   ;  0 1.0 1 0 0=14 @   0 1.0 0 1 0=12 @   0 1.0 0 0 1=11 #
+;                   ;  0 1.1 1 0 0=1c @   0 1.1 0 1 0=1a &   0 1.1 0 0 1=19 #
+;                   ;  1 0.0 1 0 0=24     1 0.0 0 1 0=22 @   1 0.0 0 0 1=21 #
+;                   ;  1 0.1 1 0 0=2c @   1 0.1 0 1 0=2a &   1 0.1 0 0 1=29 #
+;                   ;  1 1.0 1 0 0=34 @   1 1.0 0 1 0=32 &   1 1.0 0 0 1=31 #
+;                   ;  1 1.1 1 0 0=3c     1 1.1 0 1 0=3a     1 1.1 0 0 1=39 #
+;                   ;
+; Fiscal    (FF0XH) :   15141312  1110 9 8  7 6 5 4  3 2 1 0
+; 96.04.09          ;   1 1 1 1   1 1  1 1  0 0 x 0  x 0 0 0
+;                   ;              A3  A5
+;                   ;   0FF00H  =   0  0    :  PORT A low address
+;                   ;   0FF20H  =   0  1    :  PORT B data
+;                   ;   0FF08H  =   1  0    :  PORT c high address
+;                   ;   0FF28H  =   1  1    :  CONTROL WORD
+; Fiscal    (FE8XH) :   15141312  1110 9 8  7 6 5 4  3 2 1 0
+;                   ;   1 1 1 1   1 1  1 0  1 0 x 0  x 0 0 0
+;                   ;              A3  A5
+;                   ;   0FE80H  =   0  0    :  PORT A low address
+;                   ;   0FEA0H  =   0  1    :  PORT B data
+;                   ;   0FE88H  =   1  0    :  PORT c high address
+;                   ;   0FEA8H  =   1  1    :  CONTROL WORD
+;                   ;                12V       CS
+;                   ; * Write   :  p3.4 = 1 / p3.5 = 0 (for 100uS)
+;                   ; * Read    :  p3.4 = 0
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; CASIL MICOM HANDLING
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                   ;   0FE80H  =   0  0    :  PORT A = data address
+;                   ;   0FE81H  =   0  1    :  PORT B = not use
+;                   ;   0FE82H  =   1  0    :  PORT C = IN/OUT (STATUS / CONTROL)
+;                                           ;  low nibble = IN (STATUS read)
+;                                           ; high nibble = OUT (CONTROL write)
+;   D7        D6        D5        D4        D3       D2         D1         D0
+;---------|---------|---------|---------||---------|---------|---------|---------|
+;  STB 0  |  REQ 0  |  BUSY 0 | READY 0 ||  STB 1  |  REQ 1  |  BUSY 1 | READY 1 |
+;         |         |         |         ||         |         |         |         |
+;---------|---------|---------|---------||---------|---------|---------|---------|
+;   PA WRITE and PC high nibble WRITE,         ;
+;                PC low nibble READ CONDITION  ;  81
+;   PA READ and PC high nibble WRITE,          ;
+;                PC low nibble READ CONDITION  ;  91
+;   CASIL MICOM ENABLE CONDITION               ; PORT 1.7 = 1
+;;;;    CASIL MICOM DEFINE VALUE   ;;;;;;;;;;;;;
+;;;cas_pa_add    equ        0FE80h             ;PA
+;;;                                            ;PB = not use
+;;;cas_pc_add    equ        0FE82h             ;PC
+;;;cas_con_add   equ        0FE83h             ;CONTROL
+;;;CASINPUT      equ        091h               ;READ
+;;;; PA = input                                ;
+;;;CASOUTPUT     equ        081h               ;WRITE
+;;;; PA = output                               ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;               ASYNCHRONOUS COMMUNICATIN ELEMENTS(452)                  ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;  REGISTER MAP
+;     # DLAB (Divisor Latch Access Bit)- In the LINE CONTROL register
+;     # MAP Address     :   FEC0 - FEC7         Rs232c-1
+;     # MAP Address     :   FF00 - FF07         Rs232c-2
+;     # MAP Address     :   FE80 - FE87         Rs232c-2  96.04.09
+;
+; DLAB A2  A1  A0
+;  0   0   0   0  = @ Receive buffer(READ) / Transmitter holding register(WRITE)
+;                     RBR / THR
+;  0   0   0   1  = @ Interrupt enable  (IER)
+;  X   0   1   0  = @ Interrupt identification (Read only) (IIR)
+;  X   0   1   1  = @ Line control  (LCR)
+;  X   1   0   0  =   Modem control
+;  X   1   0   1  = @ Line status   (LSR)
+;  X   1   1   0  =   Modem status
+;  X   1   1   1  =   Scrach
+;  1   0   0   0  = @ Divisor latch (LSB) : 0 - 7 )
+;  1   0   0   1  = @ Divisor latch (MSB) : 8 - 15)
+;------------------------------------------------------------------------
+; ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+; ³ 1. Interrupt Enable Register ³
+; ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+;     (Enable=1/Disable=0) : SET VALUE=07h
+;     Bit0      : Enable Received Data Available Interrupt (ERBFI)
+;     Bit1      : Enable Transmitter Holding Register Interrupt (ETBEI)
+;     Bit2      : Enable Reciver Line Status Interrupt (ELSI)
+;     Bit3      : Enable Modem Status Interrupt (EDSSI)
+;      0
+;      0
+;      0
+;      0
+; ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+; ³ 2. Interrupt Identification Register (read only) ³
+; ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+;     # PRIORITY    : 1 = Receiver Line status
+;     # PRIORITY    : 2 = Receiver data ready
+;     # PRIORITY    : 3 = Transmitter holding register empty
+;     # PRIORITY    : 4 = Modem status
+;
+;     Bit 0 = 0 : Pending
+;     Bit 0 = 1 : No Interruot Pending
+;     Bit1/Bit2 : Interrupt priority
+;
+;       Bit 2   Bit 1   Bit 0
+;         0       0       1     ; None
+;         1       1       0     ; line
+;         1       0       0     ; data available
+;         0       1       0     ; trans reg empt
+;         0       0       0     ; modem
+; ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+; ³ 3. Line Control Registaer ³
+; ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+;      # Word length  :  Bit 1   Bit 0
+;                         0       0     :  5 bits
+;                         0       1     :  6 bits
+;                         1       0     :  7 bits
+;                         1       1     :  8 bits
+;
+;     # Stpt bit     :  Bit 2   word length
+;                         0       any   :  1
+;                         1       5     :  1 1/2
+;                         1       6     :  2
+;                         1       7     :  2
+;                         1       8     :  2
+;
+;     # Parity Enable bit : Bit 3
+;
+;     # Parity Even bit   : Bit 4 = 1 : EVEN / Bit4 = 0 : ODD
+;
+;     # Parity Stick bit  : Bit 5
+;                           Bit3=Bit4=Bit5=1   : EVEV
+;                           Bit3=Bit5=1,Bit4=0 : ODD
+;
+;     # Break control bit : Bit 6       1=Enable / Disable
+;
+;     # Divisor Latch Access bit(DLAB)  : Bit 7 = 1 - Divisor Latch access
+;                                               = 0 - Other register access
+;
+; ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+; ³ 4. Line Status Registaer  ³
+; ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+;     Bit0      : Data ready indicator for the receiver
+;     Bit1      : Overrun Error indicator
+;     Bit2      : Parity Errror indicator
+;     Bit3      : Framing Error indicator
+;     Bit4      : Break interrupt indicator
+;     Bit5      : Transmitter holding register EMPTY indicator
+;     Bit6      : Transmitter EMPTY indicator
+;      0        :
+;
+; BAUD RATE GENERATOR
+;
+;       Divisor # = CLK f(8M) / (baud rate * 16)
+;       DIVISOR   9600  = 52.08  = 0034h
+;       DIVISOR   4800  = 156.25 = 009Ch
+;       DIVISOR   2400  = 312.50 = 0138h
+
+;       Divisor # = CLK f(12M) / (baud rate * 16)
+;       DIVISOR   9600  = 78.125 = 004Eh
+;       DIVISOR   4800  = 156.25 = 009Ch
+;       DIVISOR   2400  = 312.50 = 0138h
+
+;       Divisor # = CLK f(22.1184) / (baud rate * 16)
+;       DIVISOR   9600  = 144 = 0090Eh
+;       DIVISOR   4800  = 156.25 = 009Ch
+;       DIVISOR   2400  = 312.50 = 0138h
+;******************************************************;
+;**          DEFINE VALUE FOR 452                    **;
+;******************************************************;
+; RS231-1 MAP Address
+reg1_recve       equ     0FEC0h         ;
+reg1_trans       equ     0FEC0h         ;
+reg1_intenv      equ     0FEC1h         ;
+reg1_intidn      equ     0FEC2h         ;
+reg1_lnecntl     equ     0FEC3h         ;
+reg1_lnestat     equ     0FEC5h         ;
+reg1_lowdiv      equ     0FEC0h         ; DLAB = 1
+reg1_higdiv      equ     0FEC1h         ; DLAB = 1
+;                                       ;
+; VALUE DEFINE                          ;
+int_mask        equ      00h            ;
+int_all         equ      07h            ;
+int_recve       equ      01h            ;
+int_trans       equ      02h            ;
+int_line        equ      04h            ;
+int_stat        equ      08h            ;
+;                                       ;
+;  bit7 bit6 bit5 bit4 bit3 bit2 bit1 bit0
+;  DLAB brk  stic e/o  p en stop  datalength
+len_7bit       equ      02h             ;
+len_8bit       equ      03h             ;
+len_1stop      equ       0h             ;
+len_2stop      equ      04h             ;
+;                                       ;
+odd_parity     equ     008h             ;
+even_parity    equ     018h             ;
+;                                       ;
+set_dalb       equ     080h             ;Baud rate divisor register access
+clr_dalb       equ     07fh             ;
+;                                       ;
+; BAUD RATE                             ;
+BD9600         equ     034h             ;
+BD4800         equ     09ch             ;
+BD2400         equ     038h             ;high=1
+;******************************************************;
+;****** io map     define             *****************;
+;******************************************************;
+lcd_ce1         equ     0fec0h
+lcd_rd1         equ     lcd_ce1+6
+lcd_wd1         equ     lcd_ce1+2
+lcd_rs1         equ     lcd_ce1+4
+lcd_wi1         equ     lcd_ce1+0
+;
+lcd_ce2         equ     0fe80h
+lcd_rd2         equ     lcd_ce2+6
+lcd_wd2         equ     lcd_ce2+2
+lcd_rs2         equ     lcd_ce2+4
+lcd_wi2         equ     lcd_ce2+0
+
+ptr_font    equ        0FFE0h           ;printer font           :WR
+ptr_stat    equ        0FFD0h           ;printer font & control :WR
+ptr_read    equ        0FE40h           ;reset & SENSOR i/o     :RD
+;                                       ;
+comm_stat   equ        0FF80h           ;
+ram_stat    equ        0FFC0h           ;
+;                                       ;
+rs1_stat    equ        0FEC0h           ;
+;;;rs2_stat    equ        0FF00h           ;
+rs2_stat    equ        0FE80h           ;
+;                                       ;
+key_addr    equ        0FE00h           ;        60 key         :RD
+;keym_addr   equ        0FE02h           ;        90 key         :RD
+;keye_addr   equ        0FE04h           ;        160key         :RD
+;                                       ;
+kmod_addr   equ        0FE00h           ;mode key       p1.0    :RD
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;                                        ;
+;add  A3 - A0 -> A0 - A3                 ;                                        ;
+;data D3 / D2 / D1 / D0 -> D5 / D0 / D6 / D7
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;                                        ;
+rtc_1sec    equ        0FF40h ;0000 0000;rtc write
+rtc_10sec   equ        0FF50h ;0001 1000;12.07
+rtc_1min    equ        0FF48h ;0010 0100;data set start point
+rtc_week    equ        0FF4Ch ;0110 0110;
+rtc_10mon   equ        0FF4Ah ;1010 0101;24 base
+rtc_1year   equ        0FF5Ah ;1011 1101;leap
+rtc_mode    equ        0FF56h ;1101 1011;
+rtc_test    equ        0FF4Eh ;1110 0111;
+rtc_reset   equ        0FF5Eh ;1111 1111;
+rtc_add     equ        0FF40h ;
+
+fs_lw_add   equ        0FF00h           ;PA
+fs_dt_add   equ        0FF04h           ;PB
+fs_hg_add   equ        0FF02h           ;PC
+fs_con_add  equ        0FF06h           ;CONTROL
+;*ÚÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄ¿ *
+;*³ active³ mode b³ mode b³ port a³ port c³ mode a³ port b³ port c³ *
+;*³ 0/1   ³ 0/1   ³ 0/1   ³ i/o   ³ i/o   ³ 0/1   ³ i/o   ³ i/o   ³ *
+;*ÀÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÙ *
+;D0 - D7 = D3/2/4/1/5/0/6/7  76543210
+CINPUT     equ        082h              ;READ ;port B=input(DATA) /*control word data*/
+COUTPUT    equ        080h              ;WRITE;all port output    /*control word data*/
+                                        ;
+;tl2        equ        0cch             ;low byte of 16bit timer/counting2
+;th2        equ        0cdh             ;high byte of 16bit timer/counting2
+;t2con      equ        0c8h             ;timer/counter2 control register
+;*ÚÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄ¿ *
+;*³# TF2  ³  EXF2 ³ RCKK  ³  TCLK ³ EXEN2 ³# TR2  ³# C/T2 ³ CP/RL2³ *
+;*ÀÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÙ *
+;  S/W CLEAR                            RUN ON/OFF  0=TIMER/1=EXT COUNTER
+                                        ;
+;T2RUN      equ        004h             ;constant
+
+T2OFF      equ        000h             ;constant
+;******************* ALL CLEAR KEY      ;
+;------ all clear ----------------------;
+DZSCAN_LINE equ        005h             ;all clear double key scan line(58h)
+DZRETN_DATA equ        020h             ;76543210 1= 02
+CKSCAN_LINE equ        004h             ;check key scan line           (a9h)
+CKRETN_DATA equ        008h             ;76543210 7= 80
+CSSCAN_LINE equ        004h             ;cash key scan line            (d9h)
+CSRETN_DATA equ        004h             ;fedcba98
+SBSCAN_LINE equ        000h             ;subtotal scan line            (c9h)
+SBRETN_DATA equ        010h             ;
+CLSCAN_LINE equ        007h             ;
+CLRETN_DATA equ        008h             ;
+PDSCAN_LINE equ        002h             ;
+PDRETN_DATA equ        008h             ;
+
+;------ keyscan define -----------------;
+KEYBUFF_NO  equ        00fh             ; key buffer no
+KEYBUFF_END equ        00eh             ; key buffer no
+KEYSCAN_NO  equ        008h             ; key scan line #
+KEYCHATT_NO equ        001h             ; key chattering times
+
+;------ printer define -----------------;
+OFFSET_FONT equ        000h             ; font data's high address offset
+FONTEND_LOW equ        0eah             ; font data's end address
+;------ feedkey define -----------------;
+RFSCAN_LINE equ        004h             ;07
+RJFRTN_DATA equ        020h             ;76543210 =00000001 = 01h
+REVRTN_DATA equ        0feh             ;76543210 =11111110 = feh
+MOTOR_9     equ        008h             ; motor and dot 9 out
+MOTOR_9L    equ        00ch             ; motor and dot 9 and lcd wrt
+;******************************************************;
+;**                   constants                      **;
+;******************************************************;
+RSTEP_STEND equ        013h             ; 19
+BLANK       equ        016h             ;
+
+RFEED       equ        054h             ;
+JFEED       equ        054h             ;
+CLEAR       equ        037h             ;
+                                        ;
+DRWTIM      equ        0ffh             ;80mS
+STDRW       equ        082h             ;
+MLTRW       equ        080h             ;
+OFFDWR      equ        080h             ;at the ram2
+
+BUZZ_MAX    equ        064h             ;buzzer counter 100mS
+
+RAM1_SEL    equ        001h
+
+SCALE_CMD1  equ        0d7h    ;* W + PARITY  11010111   *
+SCALE_CMD2  equ        08dh    ;* CR + PARITY 10001101   *
+;-----------  PRINT CONST   ------------;
+;prn_read                               ;
+;*ÚÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄ¿ * new
+;*³ all c ³ comd1 ³ comd2 ³ p-sens³ v-sens³ r-hm  ³ j-hm  ³ at-sen³ *
+;*ÀÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÙ *
+;*ÚÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄ¿ *
+;*³  D 7  ³  D 6  ³  D 5  ³  D 4  ³  D 3  ³  D 2  ³  D 1  ³  D 0  ³ *
+;*ÀÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÙ *
+;*ÚÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄÂÄÄÄÄÄÄÄ¿ *
+;*³  D 9  ³spool    stamp ³ stamp ³ r feed³P_MOTOR³LCD DIR DRAWER   * NEW
+;*ÀÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÁÄÄÄÄÄÄÄÙ *
+
+MOTOR       equ        088h   ; 10001100 ;motor & 9 dot off & lcd read(only motor)
+MOTOR_L       equ        08ch   ; 10001100 ;motor & 9 dot off & lcd wrt(only motor)
+STAMP       equ        0a4h   ; 10100100 ;stamp only 9 dot off
+AUTCUT      equ        0c3h   ; 11000011 ;mt & cut 9 dot off
+MTRF        equ        09ch   ; 10011100 ;motor & rfd & 9 dot off
+MTJF        equ        09ch   ; 10011100 ;motor & jfd & 9 dot off
+MTRFJF      equ        09ch   ; 10011100 ;motor & rfd & jfd & 9 dot off (normal)
+MTJFSP      equ        0bch   ; 10111100 ;motor & jfd & stamp & 9 dot off (last line)
+MTSP        equ        0ach   ; 10101100 ;motor & stamp & 9 dot off (last line)
+RSTRF       equ        0f7h   ; 11110111 ;RESET R FED
+RSTJF       equ        0fbh   ; 11111011 ;RESET J FED
+MTAUTC      equ        0e3h   ; 11100011 ;motor & auto cutter & 9 dot off
+ELSE_DOT    equ        0ffh   ; 11111111 ;
+DOT_9       equ        080h             ; dot 9 clear and LCD wr dir
+DOT_9_L     equ        084h
+MOTOR_9CUT  equ        00ch   ; 00100001 ;motor and dot 9 out
+MOTOR_CUT   equ        00ch   ; 10100001 ;motor and dot 9 out
+RST_9CUT    equ        0a3h   ; 10100011 ;reset dot cut
+RST_CUT     equ        023h   ; 00100011 ;reset dot cut
+CLK_READ    equ        080h   ; 10000010 ;reset dot cut
+CLK_MASK    equ        080h   ; 10000011 ;reset dot cut
+;----------  PRINT TIME CONT  ----------;
+TIMHIGH     equ        001h             ;
+TIMLOW      equ        066h             ;01e6h
+;;;TIMON    equ        013h             ;T 18
+TIMON       equ        01eh             ;T 15 93.05.01
+TIMROFF     equ        02dh             ;T 45    r-fast feed
+TIMJOFF     equ        096h             ;T 150   j-fast feed
+;                                       ;
+TIMEH       equ        002h             ;long time high digit
+TMDUMYL     equ        024h             ;dummy time T 548
+TMLRFDL     equ        06ch             ;rcpt long feed time T 620
+;---------  PRINT LOCATION CONT  -------;
+;-----------   MODE VALUE   ------------;
+VMODE       equ        001h
+MMODE       equ        002h
+PMODE       equ        004h
+ZMODE       equ        008h
+XMODE       equ        010h
+RMODE       equ        020h
+OMODE       equ        040h
+;******************************************************;
+;**          SERIAL SFR DEFINE                       **;
+;******************************************************;
+;;;T2CON    equ         0c8h     ;
+;;;RCAP2L   equ         0cah     ;
+;;;RCAP2H   equ         0cbh     ;
+;;;TL2      equ         0cch     ;
+;;;TH2      equ         0cdh     ;
+                                 ;
+TIMEOUT     equ          014h    ;14h(20)-5sec / 28h(40)-10sec
+                                 ;
+NULL        equ          00h     ;
+SOH         equ          01h     ;start of head
+STX         equ          02h     ;start of text
+EOB         equ          17h     ;end of block
+ETX         equ          03h     ;end of text
+EOT         equ          04h     ;%end of transmission
+ENQ         equ          05h     ;%enquiry
+ACK         equ          06h     ;%acknowledge
+DLE         equ          10h     ;data link escape
+NACK        equ          15h     ;negative acknowledge
+
+
+;/***** errmsg define *****/
+E_GENERAL   equ          01h
+
+;******************************************************;
+;**          08h - 1fh   not use(register bank)      **;
+;******************************************************;
+;******************************************************;
+;**          bit allocate for system control         **;
+;**          20h - 2fh                               **;
+;******************************************************;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;key_id
+knur_bit        equ        000h
+kdec_bit        equ        001h
+kclr_bit        equ        002h
+ksub_bit        equ        003h
+clear_bit       equ        004h
+none05          equ        005h
+none06          equ        006h
+none07          equ        007h
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;twostep_id
+rtn_bit         equ        008h
+vd1_bit         equ        009h
+vd2_bit         equ        00ah
+pluon_bit       equ        00bh
+mul_bit         equ        00ch
+spl_bit         equ        00dh
+kopen_bit       equ        00eh
+taxsft_bit      equ        00fh
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;dptstp_id
+dptax1_bit      equ        010h
+dptax2_bit      equ        011h
+dptax3_bit      equ        012h
+dptax4_bit      equ        013h
+negat_bit       equ        014h
+singl_bit       equ        015h
+reqscl_bit      equ        016h
+none17          equ        017h
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;dptstp1_id
+preset_bit      equ        018h
+inact_bit       equ        019h
+sall_bit        equ        01ah
+kp_bit          equ        01bh
+hash_bit        equ        01ch
+gas_bit         equ        01dh
+nadd_bit        equ        01eh
+kpred_bit       equ        01fh
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;rstep_id
+tax1_bit        equ        020h
+tax2_bit        equ        021h
+tax3_bit        equ        022h
+tax4_bit        equ        023h
+vatbk_bit       equ        024h
+none25          equ        025h
+stock_bit       equ        026h
+grand_bit       equ        027h
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;rstep1_id
+pmtax1_bit      equ        028h
+pmtax2_bit      equ        029h
+pmtax3_bit      equ        02ah
+pmtax4_bit      equ        02bh
+cupn_bit        equ        02ch
+pluact_bit      equ        02dh
+none2e          equ        02eh
+none2f          equ        02fh
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;recover_id
+conv_bit        equ        030h
+tnd_bit         equ        031h
+nona_bit        equ        032h
+sign_bit        equ        033h
+cng_bit         equ        034h
+audct_bit       equ        035h
+pksub_bit       equ        036h
+yyyyy_bit       equ        037h
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;perstp_id
+pitem_bit       equ        038h
+ppercnt_bit     equ        039h
+pinact_bit      equ        03ah
+none_3b         equ        03bh
+pdiscnt_bit     equ        03ch
+popen_bit       equ        03dh
+pdirect_bit     equ        03eh
+f1m_bit         equ        03fh
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;repot_id
+rep1_bit        equ        040h
+rep2_bit        equ        041h
+rep3_bit        equ        042h
+rep4_bit        equ        043h
+rep5_bit        equ        044h
+rep6_bit        equ        045h
+rep7_bit        equ        046h
+rep8_bit        equ        047h
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;progm_id
+pro1_bit        equ        048h
+pro2_bit        equ        049h
+pro3_bit        equ        04ah
+pro4_bit        equ        04bh
+pro5_bit        equ        04ch
+pro6_bit        equ        04dh
+pro7_bit        equ        04eh
+pro8_bit        equ        04fh
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;rec_id
+rec1_bit        equ        050h
+rec2_bit        equ        051h
+rec3_bit        equ        052h
+rec4_bit        equ        053h
+rec5_bit        equ        054h
+rec6_bit        equ        055h
+rec7_bit        equ        056h
+rec8_bit        equ        057h
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;etc_id
+lgol_bit        equ        058h
+lsharp_bit      equ        059h
+lstar_bit       equ        05ah
+lblk_bit        equ        05bh
+notdot_bit      equ        05ch
+xcnt_bit        equ        05dh
+xxcnt_bit       equ        05eh
+gnd_bit         equ        05fh
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;disp_id
+void_bit        equ        060h
+taxs_bit        equ        061h
+pfkey_bit       equ        062h
+ronoff_bit      equ        063h
+err_bit         equ        064h
+drwr_bit        equ        065h
+iosign_bit      equ        066h
+vnfd_bit        equ        067h
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;print_id
+rfkey_bit       equ        068h
+jfkey_bit       equ        069h
+rhome_bit       equ        06ah
+jhome_bit       equ        06bh
+flg_noprn       equ        06bh
+lastl_bit       equ        06ch
+ffeed_bit       equ        06dh
+jurn_bit        equ        06eh
+rept_bit        equ        06fh
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;icon_id
+pover_bit       equ        070h
+rlfeed_bit      equ        071h
+dumytm_bit      equ        072h
+sfeed_bit       equ        073h                     ;all ram clear bit     ;
+nfeed_bit       equ        074h
+rpoff_bit       equ        075h
+ffedoff_bit     equ        076h
+kin_bit         equ        077h                     ;buffering only tend line
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;dddd4
+okbuf_bit       equ        078h
+onlytd_bit      equ        079h                     ;drawer open bit
+notbuf_bit      equ        07ah                     ;valid not feed
+bmmm_bit        equ        07bh                     ;buzzer max bit
+double_bit      equ        07ch
+allramclr_bit   equ        07dh
+tempramclr_bit  equ        07eh
+stamp_bit       equ        07fh                     ;stamp_bit
+;******************************************************;
+;**   internal ram allocation for system control     **;
+;******************************************************;
+extern         key_id                     ;020h
+extern         twostep_id                 ;021h
+extern         dptstp_id                  ;022h
+extern         dptstp1_id                 ;023h
+extern         rstep_id                   ;024h
+extern         rstep1_id                  ;025h
+extern         recover_id                 ;026h
+extern         perstp_id                  ;027h
+extern         repot_id                   ;028h
+extern         progm_id                   ;029h
+extern         rec_id                     ;02ah
+extern         etc_id                     ;02bh
+extern         disp_id                    ;02ch
+extern         print_id                   ;02dh
+extern         icon_id                    ;02eh
+extern         dddd4                      ;02fh
+;------------------------------------------------------;
+extern         dph_add                    ;030h
+extern         dpl_add                    ;031h
+extern         dph0_add                   ;032h
+extern         dpl0_add                   ;033h
+extern         dph1_add                   ;034h
+extern         dpl1_add                   ;035h
+extern         dph2_add                   ;036h
+extern         dpl2_add                   ;037h
+extern         compd_flg                  ;038h
+extern         timd_cnt                   ;039h
+extern         dig_cnt                    ;03ah
+extern         buzz_cnt                   ;03bh
+extern         jam_cnt                    ;03ch
+extern         jam_flg                    ;03dh
+extern         scnl_cnt                   ;03eh
+extern         decimal                    ;03fh
+extern         prntask                    ;040h
+extern         doubf_flg                  ;041h
+extern         tmp_cnt                    ;042h
+extern         tmp1_cnt                   ;043h
+extern         jtmp_cnt                   ;044h
+extern         jtmp1_cnt                  ;045h
+extern         font_data                  ;046h
+extern         fonte_data                 ;047h
+extern         pfail_flg                  ;048h
+extern         prn_stat                   ;04ah
+extern         prt_chatt                  ;04bh
+
+extern         prt_rstm                   ;04eh
+extern         xoff_flg                   ;04fh
+extern         pend_flg                   ;052h
+extern         prgt_flag                  ;053h
+extern         pskp_flag                  ;054h
+
+extern         io_cnt                     ;050h
+extern         tend_flg                   ;051h
+extern         rend_flg                   ;052h
+extern         s_in_flg                   ;053h
+extern         siotm_cnt0                 ;054h
+extern         siotm_cnt1                 ;055h
+extern         s_out_flg                  ;056h
+extern         dsave_flg                  ;057h
+extern         stx_flg                    ;058h
+extern         etx_flg                    ;059h
+extern         dle_flg                    ;05ah
+extern         ack_flg                    ;05bh
+extern         nack_flg                   ;05ch
+extern         crc1_data                  ;05dh
+extern         crc2_data                  ;05eh
+extern         trx_buf_cnt                ;05fh
+extern         data_s_end                 ;060h
+extern         comm_status                ;061h
+extern         comm_pnt                   ;062h
+extern         comm_kind                  ;063h
+extern         comm_err                   ;064h
+extern         temp1_flg                  ;065h
+extern         selkey_flg                 ;066h
+extern         rom_flg                    ;067h
+extern         fs_data                    ;068h
+extern         blk_time                   ;069h
+extern         low_add                    ;06ah
+extern         high_add                   ;06bh
+extern         brom_flg                   ;06ch
+extern         disc_flg
+extern         timeol
+extern         timeoh
+extern         lcd_reflg
+;------------------------------------------------------;
+;               STACK   5xh - .......... 0ffh          ;
+;------------------------------------------------------;
+
+;******************************************************;
+;**   external ram allocation for control & working  **;
+;******************************************************;
+extern         flg_dis_txt;                            ;
+extern         flg_dis_txtmp;                          ;
+extern         flg_key_buf;                            ;
+extern         flg_key_pend;                           ;
+extern         fsbuf;                                  ;
+extern         temp_long;                              ;
+extern         temp_int;                               ;
+extern         jam1_cnt;
+extern scale_bit
+extern sglok_flg
+extern lcd_ch
+extern lcd_x
+extern lcd_y
+extern dsp_y
+extern dsp_buf
+extern dsp_bak
+extern mem_dest;
+extern mem_src;
+extern mem_len;
+
+;------------------------------------------------------;
+extern         comm_buff;                              ;
+;------------------------------------------------------;
+extern         decp_buf;                               ;
+extern         flg_oncht;                              ;
+extern         flg_offcht;                             ;
+extern         prt_buffer;                             ;
+extern         numtxt;                                 ;
+;extern         valdbuf                                 ;
+extern         font_buffer;                            ;
+extern         fonte_buffer;                           ;
+extern         romsum_low                              ;
+extern         romsum_hig                              ;
+extern         rtcb_flg;                               ;
+extern         eachbuf;                                ;
+extern         mode_id;                                ;
+extern         tmode_id;                                ;
+extern         fs_t_buf;                               ;
+extern         errmsg;                                 ;
+extern         dcnt;                                   ;
+extern         rcnt;                                   ;
+extern         ncnt;                                   ;
+extern         func;                                   ;
+extern         sfunc;                                  ;
+extern         nur;                                    ;
+extern         clerk;                                  ;
+extern         dnur;                                   ;
+extern         pcode;                                  ;
+extern         spcode;                                 ;
+extern         rstepold_id;                              ;
+extern         dptsav_id;                              ;
+extern         dptsav1_id;                             ;
+extern         twosave_id;                             ;
+extern         rstepsv_id;                             ;
+extern         stubbuf;                                ;
+extern         buf_cnt;                                ;
+extern         buft_cnt;                               ;
+extern         gamt;                                   ;
+extern         regstep;                                ;
+extern         tnd_clrs;                               ;
+extern         train_flg;                              ;
+extern         tnd_clre;                               ;
+extern         cntint;                                 ;
+extern         SYS_OPT                                 ;
+extern         zero_flg;                               ;
+extern         work_end;                               ;
+extern         temp_area;                              ;
+extern         report_start;                           ;
+extern         end_mark;                               ;
+extern         grand;                                  ;
+extern         ram_end;                                ;
+extern         pstat_f;
+extern         pop_lcd;
+extern         tbuff
+extern         rbuff
+extern         pop_err
+extern         blink
+extern         r_off
+extern         r_cont
+;------------------------------------------------------;
